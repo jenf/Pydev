@@ -33,6 +33,7 @@ class PydevTestResult(_PythonTextTestResult):
         self.start_time = time.time()
         self._current_errors_stack = []
         self._current_failures_stack = []
+        self._current_skip_stack = []
         
         try:
             test_name = test.__class__.__name__+"."+test._testMethodName
@@ -72,16 +73,16 @@ class PydevTestResult(_PythonTextTestResult):
             
         
         diff_time = '%.2f' % (end_time - self.start_time)
-        if not self._current_errors_stack and not self._current_failures_stack:
+        if not self._current_errors_stack and not self._current_failures_stack and not self._current_skip_stack:
             pydev_runfiles_xml_rpc.notifyTest(
                 'ok', captured_output, error_contents, test.__pydev_pyfile__, test_name, diff_time)
         else:
-            self._reportErrors(self._current_errors_stack, self._current_failures_stack, captured_output, test_name)
+            self._reportErrors(self._current_errors_stack, self._current_failures_stack, self._current_skip_stack, captured_output, test_name, diff_time)
             
             
-    def _reportErrors(self, errors, failures, captured_output, test_name, diff_time=''):
+    def _reportErrors(self, errors, failures, skips, captured_output, test_name, diff_time=''):
         error_contents = []
-        for test, s in errors+failures:
+        for test, s in errors+failures+skips:
             if type(s) == type((1,)): #If it's a tuple (for jython 2.1)
                 sio = StringIO()
                 traceback.print_exception(s[0], s[1], s[2], file=sio)
@@ -90,8 +91,11 @@ class PydevTestResult(_PythonTextTestResult):
         
         sep = '\n'+self.separator1
         error_contents = sep.join(error_contents)
-        
-        if errors and not failures:
+       
+        if skips:
+            pydev_runfiles_xml_rpc.notifyTest(
+                'skip', captured_output, error_contents, test.__pydev_pyfile__, test_name, diff_time)
+        elif errors and not failures:
             pydev_runfiles_xml_rpc.notifyTest(
                 'error', captured_output, error_contents, test.__pydev_pyfile__, test_name, diff_time)
             
@@ -118,11 +122,19 @@ class PydevTestResult(_PythonTextTestResult):
         _PythonTextTestResult.addFailure(self, test, err)
         if not hasattr(self, '_current_failures_stack'):
             #Not in start...end, so, report error now (i.e.: django pre/post-setup)
-            self._reportErrors([], [self.failures[-1]], '', self.getTestName(test))
+            self._reportErrors([], [self.failures[-1]], [], '', self.getTestName(test))
         else:
             self._current_failures_stack.append(self.failures[-1])
 
 
+    def addSkip(self, test, err):
+        fakeStack = ("skip", err, [])
+        _PythonTextTestResult.addSkip(self, test, fakeStack)
+        if not hasattr(self, '_current_skip_stack'):
+            #Not in start...end, so, report error now (i.e.: django pre/post-setup)
+            self._reportErrors([], [], [self.skipped[-1]], '', self.getTestName(test))
+        else:
+            self._current_skip_stack.append(self.skipped[-1])
 try:
     #Version 2.7 onwards has a different structure... Let's not make any changes in it for now
     #(waiting for bug: http://bugs.python.org/issue11798)
